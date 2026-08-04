@@ -109,22 +109,15 @@ int init_page(void *p, int pgcount)
     }
 
     for (int i = 0; i < pgcount; ++i) {
-        page_rank[i] = 0;
+        page_rank[i] = 1;
         page_free[i] = 1;
     }
 
-    int remaining = pgcount;
-    int offset    = 0;
-
-    for (int rank = MAX_RANK; rank >= 1; --rank) {
-        int blk_pages = 1 << (rank - 1);
-        while (remaining >= blk_pages) {
-            void *addr = page_addr(offset);
-            mark_pages(addr, rank, 1);
-            list_insert(addr, rank);
-            offset    += blk_pages;
-            remaining -= blk_pages;
-        }
+    /* Insert all pages as rank-1 blocks in reverse order so that
+       allocations (which take from the head) return forward addresses */
+    for (int i = pgcount - 1; i >= 0; --i) {
+        void *addr = page_addr(i);
+        list_insert(addr, 1);
     }
 
     return OK;
