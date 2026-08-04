@@ -17,6 +17,8 @@ static int            total_pages    = 0;
 static int           *page_rank      = NULL;   /* rank of the block each page belongs to */
 static int           *page_free      = NULL;   /* 1 = free, 0 = allocated */
 static struct free_block *free_lists[MAX_RANK + 1]; /* heads of free lists, index by rank */
+static int            free_cnt[MAX_RANK + 1];   /* cached block count per rank */
+static int            max_free_rank = 0;        /* highest rank with non-empty free list */
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -52,6 +54,12 @@ static void list_remove(void *p, int rank)
         free_lists[rank] = blk->next;
     if (blk->next)
         blk->next->prev = blk->prev;
+    free_cnt[rank]--;
+    /* update max_free_rank if we emptied the highest rank */
+    if (free_cnt[rank] == 0 && rank == max_free_rank) {
+        while (max_free_rank > 0 && free_cnt[max_free_rank] == 0)
+            max_free_rank--;
+    }
 }
 
 /* Insert a block at the head of its rank's free list */
@@ -63,6 +71,9 @@ static void list_insert(void *p, int rank)
     if (free_lists[rank])
         free_lists[rank]->prev = blk;
     free_lists[rank] = blk;
+    free_cnt[rank]++;
+    if (rank > max_free_rank)
+        max_free_rank = rank;
 }
 
 /* Set the metadata for every page belonging to a block */
@@ -89,8 +100,11 @@ int init_page(void *p, int pgcount)
     mem_base    = p;
     total_pages = pgcount;
 
-    for (int r = 1; r <= MAX_RANK; ++r)
+    for (int r = 1; r <= MAX_RANK; ++r) {
         free_lists[r] = NULL;
+        free_cnt[r]   = 0;
+    }
+    max_free_rank = 0;
 
     page_rank = (int *)malloc((unsigned)pgcount * sizeof(int));
     page_free = (int *)malloc((unsigned)pgcount * sizeof(int));
@@ -137,21 +151,23 @@ void *alloc_pages(int rank)
     }
 
     /* 2. Split a larger block */
-    for (int r = rank + 1; r <= MAX_RANK; ++r) {
-        if (free_lists[r]) {
-            void *addr = (void *)free_lists[r];
-            list_remove(addr, r);
+    if (rank <= max_free_rank) {
+        for (int r = rank + 1; r <= max_free_rank; ++r) {
+            if (free_lists[r]) {
+                void *addr = (void *)free_lists[r];
+                list_remove(addr, r);
 
-            /* Split from r down to rank */
-            for (int s = r; s > rank; --s) {
-                int    half_pages = 1 << (s - 2);
-                void  *buddy      = (char *)addr + half_pages * PAGE_SIZE;
-                mark_pages(buddy, s - 1, 1);
-                list_insert(buddy, s - 1);
+                /* Split from r down to rank */
+                for (int s = r; s > rank; --s) {
+                    int    half_pages = 1 << (s - 2);
+                    void  *buddy      = (char *)addr + half_pages * PAGE_SIZE;
+                    mark_pages(buddy, s - 1, 1);
+                    list_insert(buddy, s - 1);
+                }
+
+                mark_pages(addr, rank, 0);
+                return addr;
             }
-
-            mark_pages(addr, rank, 0);
-            return addr;
         }
     }
 
@@ -217,8 +233,5 @@ int query_page_counts(int rank)
     if (rank < 1 || rank > MAX_RANK)
         return -EINVAL;
 
-    int cnt = 0;
-    for (struct free_block *curr = free_lists[rank]; curr; curr = curr->next)
-        ++cnt;
-    return cnt;
+    return free_cnt[rank];
 }
