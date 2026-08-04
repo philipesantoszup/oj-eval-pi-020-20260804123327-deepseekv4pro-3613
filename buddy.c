@@ -37,8 +37,9 @@ static inline void *page_addr(int idx)
 /* Check whether p is a valid page-aligned address inside the pool */
 static int is_valid_page(void *p)
 {
-    if (p == NULL || p < mem_base) return 0;
+    if (p == NULL) return 0;
     unsigned long offset = (unsigned long)((char *)p - (char *)mem_base);
+    /* Check bounds using offset arithmetic to avoid UB from pointer comparison */
     if (offset >= (unsigned long)total_pages * PAGE_SIZE) return 0;
     if (offset % PAGE_SIZE != 0) return 0;
     return 1;
