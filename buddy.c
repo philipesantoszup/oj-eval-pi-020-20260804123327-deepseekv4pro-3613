@@ -200,8 +200,13 @@ int return_pages(void *p)
         if (bud_off >= (unsigned long)total_pages * PAGE_SIZE)
             break;
 
-        void *buddy     = (char *)mem_base + bud_off;
         int   bud_idx   = (int)(bud_off / PAGE_SIZE);
+
+        /* The entire buddy block must fit within the pool */
+        if (bud_idx + (1 << (rank - 1)) > total_pages)
+            break;
+
+        void *buddy     = (char *)mem_base + bud_off;
 
         if (page_free[bud_idx] && page_rank[bud_idx] == rank) {
             list_remove(buddy, rank);
@@ -225,7 +230,14 @@ int query_ranks(void *p)
     if (!is_valid_page(p))
         return -EINVAL;
 
-    return page_rank[page_index(p)];
+    int idx  = page_index(p);
+    int rank = page_rank[idx];
+
+    /* For allocated pages, p must be the start of its block */
+    if (!page_free[idx] && idx % (1 << (rank - 1)) != 0)
+        return -EINVAL;
+
+    return rank;
 }
 
 int query_page_counts(int rank)
